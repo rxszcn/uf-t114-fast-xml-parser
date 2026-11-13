@@ -1,0 +1,18 @@
+{
+  "validations": {
+    "vulnerableDependencies": false,
+    "uncommittedChanges": true,
+    "untrackedFiles": false,
+    "sensitiveData": {
+      "ignore": [
+        "*todo.md"
+      ]
+    },
+    "branch": "master",
+    "gitTag": true
+  },
+  "confirm": true,
+  "publishCommand": "npm publish",
+  "publishTag": "latest",
+  "prePublishScript": "npm test && npm test-types"
+}

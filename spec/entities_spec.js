@@ -1,0 +1,755 @@
+import { XMLParser } from "../src/fxp.js";
+import { EntityDecoder, COMMON_HTML } from "@nodable/entities";
+
+describe("XMLParser Entities", function () {
+
+    it("should parse attributes with valid names, default entities", function () {
+        const xmlData = `<a:root xmlns:a="urn:none" xmlns:a-b="urn:none">
+        <a:a attr="2foo&ampbar&apos;">1</a:a>
+        <a:b>2</a:b>
+        <a-b:b-a>2</a-b:b-a>
+        <a:c>test&amp;\r\nтест&lt;\r\ntest</a:c>
+        <a:el><![CDATA[<a>&lt;<a/>&lt;b&gt;2</b>]]]]>\r\n<![CDATA[]]]]><![CDATA[>&amp;]]>a</a:el>
+        <c:string lang="ru">\
+    &#x441;&#x442;&#x440;&#x430;&#x445;&#x43e;&#x432;&#x430;&#x43d;&#x438;&#x44f;\
+    » &#x43e;&#x442; &#x441;&#x443;&#x43c;&#x43c;&#x44b; \
+    &#x435;&#x433;&#x43e; &#x430;&#x43a;&#x442;&#x438;&#x432;&#x43e;&#x432;\
+    </c:string>
+    </a:root>`;
+
+        const expected = {
+            "a:root": {
+                "@_xmlns:a": "urn:none",
+                "@_xmlns:a-b": "urn:none",
+                "a:a": {
+                    "#text": 1,
+                    "@_attr": "2foo&ampbar'"
+                },
+                "a:b": 2,
+                "a-b:b-a": 2,
+                "a:c": "test&\nтест<\ntest",
+                "a:el": "<a>&lt;<a/>&lt;b&gt;2</b>]]]]>&amp;a",
+                "c:string": {
+                    "#text": "&#x441;&#x442;&#x440;&#x430;&#x445;&#x43e;&#x432;&#x430;&#x43d;&#x438;&#x44f;    » &#x43e;&#x442; &#x441;&#x443;&#x43c;&#x43c;&#x44b;     &#x435;&#x433;&#x43e; &#x430;&#x43a;&#x442;&#x438;&#x432;&#x43e;&#x432;",
+                    "@_lang": "ru"
+                }
+            }
+        };
+
+        const options = {
+            allowBooleanAttributes: true,
+            ignoreAttributes: false,
+            processEntities: {
+            }
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData, true);
+
+        // console.log(JSON.stringify(result, null, 4));
+        expect(result).toEqual(expected);
+    });
+
+    it("should parse XML with DOCTYPE without internal DTD", function () {
+        const xmlData = `<?xml version='1.0' standalone='no'?>
+            <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" >
+            <svg><metadata>test</metadata></svg>`;
+        const expected = {
+            "?xml": {
+                "@_version": "1.0",
+                "@_standalone": "no"
+            },
+            "svg": {
+                "metadata": "test"
+            }
+        };
+
+        const options = {
+            allowBooleanAttributes: true,
+            ignoreAttributes: false,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData, true);
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should parse XML with DOCTYPE without internal DTD and brackets in value", function () {
+        const xmlData = `<?xml version='1.0' standalone='no'?>
+        <!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" >
+        <svg>
+            <metadata>[test]</metadata>
+        </svg>`;
+        const expected = {
+            "?xml": {
+                "@_version": "1.0",
+                "@_standalone": "no"
+            },
+            "svg": {
+                "metadata": "[test]"
+            }
+        };
+
+        const options = {
+            allowBooleanAttributes: true,
+            ignoreAttributes: false,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData, true);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should error for when any tag is left to close", function () {
+        const xmlData = `<?xml version="1.0"?><!DOCTYPE `;
+        expect(() => {
+            const parser = new XMLParser();
+            parser.parse(xmlData);
+        }).toThrowError("Unclosed DOCTYPE")
+    })
+
+    it("should parse XML with DOCTYPE with valid comment expressions    ", function () {
+        const xmlData = "<?xml version=\"1.0\" standalone=\"yes\" ?>" +
+            "<!--open the DOCTYPE declaration -" +
+            "  the open square bracket indicates an internal DTD-->" +
+            "<!DOCTYPE foo [" +
+            "<!--define the internal DTD-->" +
+            "<!ELEMENT foo EMPTY>" +
+            "<!ELEMENT foo ANY>" +
+            "<!--close the DOCTYPE declaration-->" +
+            "]>" +
+            "<foo>Hello World.</foo>";
+
+        const expected = {
+            "?xml": "",
+            foo: "Hello World."
+        };
+
+        const options = {
+
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        //console.log(JSON.stringify(result,null,4));
+        expect(result).toEqual(expected);
+    });
+
+    it("should not throw error when DTD comments contain '<' or '>'", function () {
+        const xmlData = `<!DOCTYPE greeting [<!-- < > < -->]>`;
+
+        const parser = new XMLParser();
+        parser.parse(xmlData);
+    });
+
+    it("should read entity value between correct matching quote char", function () {
+        const xmlData = `<!DOCTYPE x [ <!ENTITY x 'x">]><!--'> ]>
+                <X>
+                    <Y/><![CDATA[--><X><Z/><!--]]>-->
+                </X>`;
+        const expected = {
+            X: {
+                Y: '',
+                '#text': '--><X><Z/><!---->'
+            }
+        };
+        const parser = new XMLParser();
+        let result = parser.parse(xmlData);
+        // console.log(result);
+        expect(result).toEqual(expected);
+    });
+
+    it("should escape regex char from entity name", function () {
+        const xmlData = `<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY l. "<img src=x onerror=alert(1)>">
+]>
+<root>
+  <text>Hello &lt;b&gt;World&lt;/b&gt;</text>
+</root>`;
+
+        const expected = {
+            "?xml": "",
+            "root": {
+                "text": "Hello <b>World</b>"
+            }
+        };
+
+        const options = {
+
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        //console.log(JSON.stringify(result,null,4));
+        expect(result).toEqual(expected);
+    });
+
+    it("should parse attributes having '>' in value", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+
+        <!DOCTYPE note [
+        <!ENTITY nbsp "&#xA0;">
+        <!ENTITY writer "Writer: Donald Duck.">
+        <!ENTITY copyright "Copyright: W3Schools.">
+        ]>
+        
+        <note>
+            <to>Tove</to>
+            <from>Jani</from>
+            <heading>Reminder</heading>
+            <body attr="&writer;">Don't forget me this weekend!</body>
+            <footer>&writer;&nbsp;&copyright;</footer>
+        </note> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": {
+                "to": "Tove",
+                "from": "Jani",
+                "heading": "Reminder",
+                "body": {
+                    "#text": "Don't forget me this weekend!",
+                    "attr": "Writer: Donald Duck."
+                },
+                "footer": "Writer: Donald Duck.&nbsp;Copyright: W3Schools."
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    });
+    it("should parse dynamic entity", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+
+        <!DOCTYPE note [
+        <!ENTITY nbsp "writer;">
+        <!ENTITY writer "Writer: Donald Duck.">
+        <!ENTITY copyright "Copyright: W3Schools.">
+        ]>
+        
+        <note>
+            <heading>Reminder</heading>
+            <body attr="&writer;">Don't forget me this weekend!</body>
+            <footer>&writer;&&nbsp;&copyright;</footer>
+        </note> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": {
+                "heading": "Reminder",
+                "body": {
+                    "#text": "Don't forget me this weekend!",
+                    "attr": "Writer: Donald Duck."
+                },
+                "footer": "Writer: Donald Duck.&writer;Copyright: W3Schools."
+            }
+        }
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should allow !ATTLIST & !NOTATION", function () {
+        const xmlData = `<?xml version="1.0"?>
+        <!DOCTYPE code [
+          <!ELEMENT code (#PCDATA)>
+          <!NOTATION vrml PUBLIC "VRML 1.0">
+          <!NOTATION vrml2 PUBLIC "VRML 1.0"   "system">
+          <!ATTLIST code lang NOTATION (vrml) #REQUIRED>
+        ]>
+        <code lang="vrml">Some VRML instructions</code>`;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0"
+            },
+            "code": {
+                "lang": 'vrml',
+                "#text": 'Some VRML instructions'
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should build by decoding default entities in preserve mode", function () {
+        const jsObj = [
+            {
+                "note": [
+                    {
+                        "body": [
+                            {
+                                "#text": "3 < 4"
+                            },
+                            {
+                                "attr": [
+                                    {
+                                        "#text": "Writer: Donald Duck."
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ],
+                ":@": {
+                    "@heading": "Reminder > \"Alert"
+                }
+            }
+        ];
+
+        const expected = `
+        <note heading="Reminder &gt; &quot;Alert">
+            <body>
+             3 &lt; 4
+             <attr>Writer: Donald Duck.</attr>
+            </body>
+        </note>`;
+
+        const options = {
+            attributeNamePrefix: "@",
+            ignoreAttributes: false,
+            preserveOrder: true,
+            // processEntities: false
+        };
+
+        const parser = new XMLParser(options);
+        let result = parser.parse(expected);
+        // console.log(JSON.stringify(result,null,4));
+        expect(result).toEqual(jsObj);
+
+    });
+
+    it("should parse HTML entities when htmlEntities:true but single parse only", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+
+        <!DOCTYPE note [
+        <!ENTITY nbsp "writer;">
+        <!ENTITY writer "Writer: Donald Duck.">
+        <!ENTITY copyright "Copyright: W3Schools.">
+        ]>
+        
+        <note>
+            <heading>Reminder</heading>
+            <body attr="&writer;">Don't forget me this weekend!&reg;</body>
+            <footer>&writer;&&nbsp;&copyright;&inr;</footer>
+        </note> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": {
+                "heading": "Reminder",
+                "body": {
+                    "#text": "Don't forget me this weekend!®",
+                    "attr": "Writer: Donald Duck."
+                },
+                "footer": "Writer: Donald Duck.&writer;Copyright: W3Schools.₹"
+            }
+        }
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    });
+
+
+    it("should parse HTML numeric entities when htmlEntities:true", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+        <note>
+            <heading>Bear</heading>
+            <body face="&#x295;&#x2022;&#x1D25;&#x2022;&#x294;" smile="&#x1F60A;&#128523;">Bears are called B&#228;ren in German!</body>
+        </note> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": {
+                "heading": "Bear",
+                "body": {
+                    "#text": "Bears are called Bären in German!",
+                    "face": "ʕ•ᴥ•ʔ",
+                    "smile": "\u{1F60A}\u{1F60B}"
+                }
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: true,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should skip HTML numeric or hex entities when htmlEntities:true but entity is out of range", function () {
+        const xmlData = `<root attr="&#9999999;">&#xFFFFFF;</root>`;
+
+        const expected = {
+            "root": {
+                "#text": "&#xFFFFFF;",
+                "attr": "&#9999999;"
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: true,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should throw error if an entity name contains special char", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+
+        <!DOCTYPE note [
+        <!ENTITY nj$ "writer;">
+        <!ENTITY wr?er "Writer: Donald Duck.">
+        ]>`;
+
+        const options = {
+            processEntities: true,
+        };
+
+        expect(() => {
+            const parser = new XMLParser(options);
+            parser.parse(xmlData);
+        }).toThrowError("Invalid entity name nj$")
+    });
+
+    it("should allow localised entity names", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="UTF-8"?>
+
+        <!DOCTYPE note [
+        <!ENTITY ሀሎ "Amharic hello!">
+        <!ENTITY Здраво "Macedonian hello.">
+        ]>
+
+        <note>
+            <heading>Reminder</heading>
+            <body attr="&ሀሎ;">Don't forget me this weekend! &Здраво;</body>
+        </note> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": {
+                "heading": "Reminder",
+                "body": {
+                    "#text": "Don't forget me this weekend! Macedonian hello.",
+                    "attr": "Amharic hello!"
+                }
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result).toEqual(expected);
+    });
+});
+
+describe("XMLParser External Entities", function () {
+
+    it("should throw error when an entity value has '&'", function () {
+        const parser = new XMLParser();
+        expect(() => {
+            parser.addEntity("#xD", "&\r");
+        }).toThrowError("Entity value can't have '&'");
+    });
+
+    it("should throw error when an entity identifier has '&'", function () {
+        const parser = new XMLParser();
+        expect(() => {
+            parser.addEntity("&#xD", "\r");
+        }).toThrowError("An entity must be set without '&' and ';'. Eg. use '#xD' for '&#xD;'");
+    });
+
+    it("should throw error when an entity identifier has ';'", function () {
+        const parser = new XMLParser();
+        expect(() => {
+            parser.addEntity("#xD;", "\r");
+        }).toThrowError("An entity must be set without '&' and ';'. Eg. use '#xD' for '&#xD;'");
+    });
+
+    xit("should set and parse for valid entity set externally", function () {
+        const xmlData = `<note>&unknown;&#xD;last</note> `;
+
+        const parser = new XMLParser();
+        parser.addEntity("#xD", "\r\n");
+        expect(() => parser.parse(xmlData))
+            .toThrowError(`[EntityReplacer] Invalid character '#' in entity name: "#xD"`);
+    });
+
+    it("External Entity can change the behavior of default entities", function () {
+        const xmlData = `<note>&gt;last</note> `;
+
+        const parser = new XMLParser();
+        parser.addEntity("gt", "<>");
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result.note).toEqual(`<>last`);
+    });
+
+    it("Same external Entity can be set by multiple times", function () {
+        const xmlData = `<note>&gt;last</note> `;
+
+        const parser = new XMLParser();
+        parser.addEntity("gt", "<>");
+        parser.addEntity("gt", "><");
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result.note).toEqual(`><last`);
+    });
+
+    it("should replace '&amp;lt;' with '&lt;'", function () {
+        const xmlData = `<SimpleScalarPropertiesInputOutput>
+        <stringValue>&amp;lt;</stringValue>
+      </SimpleScalarPropertiesInputOutput>`;
+
+        const expected = {
+            "SimpleScalarPropertiesInputOutput": {
+                "stringValue": "&lt;"
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            // preserveOrder: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        //console.log(JSON.stringify(result,null,4));
+
+        expect(result).toEqual(expected);
+    });
+
+    it("should support entities with tags in content", function () {
+        const xmlData = `
+        <?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [ 
+	<!ENTITY Smile " 
+    	<rect x='.5' y='.5' width='29' height='39' fill='black' stroke='red'/>
+		<g transform='translate(0, 5)'> 
+			<circle cx='15' cy='15' r='10' fill='yellow'/>
+			<circle cx='12' cy='12' r='1.5' fill='black'/>
+			<circle cx='17' cy='12' r='1.5' fill='black'/>
+			<path d='M 10 19 L 15 23 20 19' stroke='black' stroke-width='2'/></g>"
+	> 
+]>
+<svg width="850px" height="700px" version="1.1" xmlns="http://www.w3.org/2000/svg">
+<g transform="matrix(16,0,0,16,0,0)">&Smile;</g></svg> `;
+
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "utf-8"
+            },
+            "svg": {
+                "g": {
+                    "#text": " \n    \t<rect x='.5' y='.5' width='29' height='39' fill='black' stroke='red'/>\n\t\t<g transform='translate(0, 5)'> \n\t\t\t<circle cx='15' cy='15' r='10' fill='yellow'/>\n\t\t\t<circle cx='12' cy='12' r='1.5' fill='black'/>\n\t\t\t<circle cx='17' cy='12' r='1.5' fill='black'/>\n\t\t\t<path d='M 10 19 L 15 23 20 19' stroke='black' stroke-width='2'/></g>",
+                    "transform": "matrix(16,0,0,16,0,0)"
+                },
+                "width": "850px",
+                "height": "700px",
+                "version": "1.1",
+                "xmlns": "http://www.w3.org/2000/svg"
+            }
+        };
+
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            // preserveOrder: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result,null,4));
+
+        expect(result).toEqual(expected);
+    });
+});
+
+describe("@nodable/entities", function () {
+    it("should decode XML entities only", function () {
+        const entityDecoder = new EntityDecoder();
+        const xmlData = `<?xml version="1.0" encoding="UTF-8"?>
+        <note>&unknown;&#xD;last &lt;&copy;</note> `;
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": "&unknown;\rlast <&copy;"
+        }
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            // htmlEntities: false, doesn't matter when entity decoder is set
+            entityDecoder: entityDecoder,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    })
+    it("should decode HTML entities when set even htmlEntities is false", function () {
+        const entityDecoder = new EntityDecoder({
+            namedEntities: COMMON_HTML,
+        });
+        const xmlData = `<?xml version="1.0" encoding="UTF-8"?>
+        <note>&unknown;&#xD;last &lt;&copy;</note> `;
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": "&unknown;\rlast <©"
+        }
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: false, //doesn't matter when entity decoder is set
+            entityDecoder: entityDecoder,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    })
+    it("should leave ncr as per XML version 1.0", function () {
+        const entityDecoder = new EntityDecoder({
+            namedEntities: COMMON_HTML,
+            ncr: { onNCR: 'leave' }
+        });
+        const xmlData = `<?xml version="1.0" encoding="UTF-8"?>
+        <note>&unknown;'&#60;'</note> `;
+        const expected = {
+            "?xml": {
+                "version": "1.0",
+                "encoding": "UTF-8"
+            },
+            "note": "&unknown;'&#60;'"
+        }
+        const options = {
+            attributeNamePrefix: "",
+            ignoreAttributes: false,
+            processEntities: true,
+            htmlEntities: false, //doesn't matter when entity decoder is set
+            entityDecoder: entityDecoder,
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result).toEqual(expected);
+    })
+
+    it("should remove '#x1B' ncr as per XML version 1.0 with default config", function () {
+
+        const xmlData = `<?xml version="1.0" ?><root>&#x1B;&#27;</root>`;
+        const expected = {
+            "root": '&#x1B;&#27;'
+        }
+        const options = {
+            //ignoreAttributes: false, //should work without this
+            processEntities: true,
+            // htmlEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result.root.length).toEqual(0);
+    })
+    it("should leave '#x1B' ncr as per XML version 1.1 with default config", function () {
+
+        const xmlData = `<?xml version="1.1" ?><root>&#x1B;&#27;</root>`;
+        const expected = {
+            "root": '&#x1B;&#27;'
+        }
+        const options = {
+            //ignoreAttributes: false, //should work without this
+            processEntities: true
+        };
+        const parser = new XMLParser(options);
+        let result = parser.parse(xmlData);
+        // console.log(JSON.stringify(result, null, 4));
+
+        expect(result.root.length).toEqual(11);
+    })
+})

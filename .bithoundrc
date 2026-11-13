@@ -1,0 +1,9 @@
+{
+  "ignore": [
+    "lib/**",
+    "static/**",
+    "tasks",
+    "spec/**",
+    "docs/**"
+    ]
+}

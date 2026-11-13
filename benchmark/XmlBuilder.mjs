@@ -1,0 +1,55 @@
+"use strict";
+
+import Benchmark from "benchmark";
+const suite = new Benchmark.Suite("XML Builder benchmark");
+
+import {XMLBuilder} from "../src/fxp.js";
+import xml2js from "xml2js";
+const xml2jsBuilder = new xml2js.Builder();
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+    
+// compatibility
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+import fs from "fs";
+import path from "path";
+const fileNamePath = path.join(__dirname, "../spec/assets/test.json");//1.5k
+const fileNamePath2 = path.join(__dirname, "../spec/assets/test_ordered.json");//1.5k
+const jsonData = JSON.parse(fs.readFileSync(fileNamePath).toString());
+const jsonOrderedData = JSON.parse(fs.readFileSync(fileNamePath2).toString());
+
+const fxpBuilder = new XMLBuilder();
+const fxpBuilderForOrderedJs = new XMLBuilder({preserveOrder: true});
+
+suite
+    .add("fxp", function() {
+        fxpBuilder.build(jsonData);
+    })
+    .add("fxp - preserve order", function() {
+        fxpBuilderForOrderedJs.build(jsonOrderedData);
+    })
+    .add('xml2js ', function() {
+        xml2jsBuilder.buildObject(jsonData);
+    })
+
+    .on("start", function() {
+        console.log("Running Suite: " + this.name);
+    })
+    .on("error", function(e) {
+        console.log("Error in Suite: " + this.name, e);
+    })
+    .on("abort", function(e) {
+        console.log("Aborting Suite: " + this.name, e);
+    })
+    /*.on('cycle',function(event){
+        console.log("Suite ID:" + event.target.id);
+    })*/
+    // add listeners
+    .on("complete", function() {
+        for (let j = 0; j < this.length; j++) {
+            console.log(this[j].name + " : " + this[j].hz + " requests/second");
+        }
+    })
+    // run async
+    .run({"async": true});
