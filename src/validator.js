@@ -21,15 +21,21 @@ export function validate(xmlData, options) {
   let reachedRoot = false;
 
   if (xmlData[0] === '\ufeff') {
-    // check for byte order mark (BOM)
+    // check for byte order mark (BOM). After stripping it the remaining
+    // string is re-indexed from 0, so a leading '<?xml' still sits at the
+    // document start and its PI target begins at index 2.
     xmlData = xmlData.substr(1);
   }
+  //index of the PI target when an XML declaration is placed at the very
+  //start of the document: '<' at 0, '?' at 1, target name starting at 2
+  const declarationStart = 2;
 
   for (let i = 0; i < xmlData.length; i++) {
 
     if (xmlData[i] === '<' && xmlData[i + 1] === '?') {
       i += 2;
-      i = readPI(xmlData, i);
+      //i now points at the first character of the PI target (e.g. the 'x' of '<?xml')
+      i = readPI(xmlData, i, declarationStart);
       if (i.err) return i;
     } else if (xmlData[i] === '<') {
       //starting of tag
@@ -149,7 +155,8 @@ export function validate(xmlData, options) {
               i = readCommentAndCDATA(xmlData, i);
               continue;
             } else if (xmlData[i + 1] === '?') {
-              i = readPI(xmlData, ++i);
+              //i points at '<'; i+2 is the first character of the PI target
+              i = readPI(xmlData, i + 2, declarationStart);
               if (i.err) return i;
             } else {
               break;
@@ -194,26 +201,59 @@ function isWhiteSpace(char) {
   return char === ' ' || char === '\t' || char === '\n' || char === '\r';
 }
 /**
- * Read Processing insstructions and skip
- * @param {*} xmlData
- * @param {*} i
+ * Read a processing instruction (PI) and skip past it.
+ *
+ * The caller passes the index of the PI target's first character, i.e. the
+ * position right after '<?' (e.g. the 'x' of '<?xml').
+ * It returns the index of the '>' of the closing '?>', or an error object
+ * whose `err` flag the caller is expected to check.
+ *
+ * Two malformed shapes are rejected here so that the validation layer keeps
+ * the same position rules as the parsing layer (which throws
+ * "Pi Tag is not closed." for an unclosed PI):
+ *   1. A PI whose closing '?>' is missing, wherever it appears in the
+ *      document (prolog, element content or trailing top level).
+ *   2. An 'xml' declaration appearing anywhere other than the very start of
+ *      the document.
+ *
+ * @param {string} xmlData
+ * @param {number} i index of the PI target's first character, right after '<?'
+ * @param {number} declarationStart index the PI target must have for a legal, document-start XML declaration
  */
-function readPI(xmlData, i) {
+function readPI(xmlData, i, declarationStart) {
   const start = i;
+
+  //read the PI target name: everything up to the first whitespace or '?'
+  let target = '';
   for (; i < xmlData.length; i++) {
-    if (xmlData[i] == '?' || xmlData[i] == ' ') {
-      //tagname
-      const tagname = xmlData.substr(start, i - start);
-      if (i > 5 && tagname === 'xml') {
-        return getErrorObject('InvalidXml', 'XML declaration allowed only at the start of the document.', getLineNumberForPosition(xmlData, i));
-      } else if (xmlData[i] == '?' && xmlData[i + 1] == '>') {
-        //check if valid attribut string
-        i++;
-        break;
-      } else {
-        continue;
-      }
+    if (xmlData[i] === ' ' || xmlData[i] === '?' ||
+      xmlData[i] === '\t' || xmlData[i] === '\n' || xmlData[i] === '\r') {
+      target = xmlData.substring(start, i);
+      break;
     }
+  }
+
+  //an 'xml' declaration is legal only when it is the very first node of
+  //the document; otherwise reject it at its own position before looking for
+  //the closing sequence
+  if (target === 'xml' && start !== declarationStart) {
+    return getErrorObject('InvalidXml', 'XML declaration allowed only at the start of the document.', getLineNumberForPosition(xmlData, start));
+  }
+
+  //scan the PI body until the closing '?>' is reached
+  for (; i < xmlData.length; i++) {
+    if (xmlData[i] === '?' && xmlData[i + 1] === '>') {
+      //end of the PI; leave the cursor on '>' so the outer loop advances past it
+      i++;
+      break;
+    }
+  }
+
+  if (i >= xmlData.length) {
+    //the closing '?>' was never found — report the PI target/content and
+    //its position, matching the parsing layer's "Pi Tag is not closed." rule
+    const piName = target || xmlData.substr(start);
+    return getErrorObject('InvalidXml', "Pi Tag '" + piName + "' is not closed.", getLineNumberForPosition(xmlData, start));
   }
   return i;
 }
